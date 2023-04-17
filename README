@@ -1,0 +1,52 @@
+k_smakotina, lavrov14798
+Keren Levit (336462890), Michael Lavrov (321259079)
+EX: 2
+
+FILES:
+ -- a file with some code
+
+ANSWERS:
+
+Assignment 1:
+
+1. a. This commands are used to switch between threads.
+sigsetjmp function saves the current location,CPU state and signal mask.
+siglongjmp function goes to the saved location, restoring the state and the signal mask.
+
+b. The functions sigsetjmp and siglongjmp have an impact on masking,
+by saving and restoring the program's signal mask.
+So any signals that are received, while the program is running a crucial part of code,
+can be temporarily blocked and when the program resumes execution,
+any signals that were received during that time will be handled correctly.
+
+2. One general use of user-level threads is in the implementation of the merge
+sort algorithm. In each iteration the algorithm divides the array into two
+sub arrays and sorts each of them separately. We can make it more efficient
+using user-level threads. A new thread is opened for each sub array, so they could
+be sorted simultaneously.
+
+3. Advantages:
+- A new process for each tab makes them independent from each other. When one tab crashes,
+it does not affect the other tabs.
+- Opening each tab in a separate process is more secure. When malicious code
+is running on a certain web-site, the separation of the processes helps the computer
+to protect the rest of the system from this web-site.
+
+Disadvantages:
+- High overhead: all operations require a kernel trap, significant work.
+
+4. c. First, when typing the command "kill pid", the keyboard sends a 'hardware interupt' to the OS in order
+to recieve the input from the user. The OS handles this interupt.
+Then, when we execute the "kill pid" command, the shell program sends a signal to the process with the specified id.
+In our case, it is the process which runs the "shotwell" program. The signal is handled by the "shotwell" process. The
+signal tells the process to terminate.
+
+5. The 'virtual time' is the running time of a process. 'Real time' is the actual time that passes in the system
+(measured in seconds as we know).
+An example for using virtual time is the 'Virtual timer', a program that measures the running time of a process.
+An example for using real time is the PC, which uses the actual time to synchronize the fetch-execute cycle.
+
+
+
+
+
