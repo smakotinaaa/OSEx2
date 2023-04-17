@@ -4,6 +4,7 @@
 #include <iostream>
 #include "uthreads.h"
 #include <queue>
+#include <deque>
 #include <sys/time.h>
 
 typedef unsigned long address_t;
@@ -56,7 +57,7 @@ public:
 
 class ThreadScheduler{
 public:
-    std::queue<Thread> threads_queue;
+    std::deque<Thread> threads_queue;
     int total_quantum;
     int cur_index;
     int threads_num;
@@ -77,9 +78,9 @@ void timer_handler(int sig){
     while(!scheduler.threads_queue.empty()){
         scheduler.total_quantum ++;
         Thread cur_thread = scheduler.threads_queue.front();
-        scheduler.threads_queue.pop();
+        scheduler.threads_queue.pop_front();
         cur_thread.state = READY;
-        scheduler.threads_queue.push(cur_thread);
+        scheduler.threads_queue.push_back(cur_thread);
         Thread next_thread = scheduler.threads_queue.front();
         next_thread.state = RUNNING;
 
@@ -105,7 +106,7 @@ int uthread_init(int quantum_usecs){
         std::cerr << THREAD_ERROR <<"Quantum_usecs is not positive" << std::endl;
         return -1;
     }
-    scheduler.threads_queue.push(*new Thread(0));
+    scheduler.threads_queue.push_back(*new Thread(0));
     // Install timer_handler as the signal handler for SIGVTALRM.
     sa.sa_handler = &timer_handler;
     if (sigaction(SIGVTALRM, &sa, NULL) < 0)
@@ -144,7 +145,7 @@ int uthread_spawn(thread_entry_point entry_point){
     scheduler.cur_index ++;
     Thread new_thread = *new Thread(scheduler.cur_index, stack_pointer, entry_point);
     new_thread.state = READY;
-    scheduler.threads_queue.push(new_thread);
+    scheduler.threads_queue.push_back(new_thread);
     return new_thread.tid;
 }
 
@@ -160,6 +161,6 @@ int uthread_spawn(thread_entry_point entry_point){
 */
 int uthread_terminate(int tid){
     auto iterator = scheduler.threads_queue.begin();
-    std::advance(iterator, tid); // move iterator to element at index
-    scheduler.threads_queue.erase(iterator); // remove element at index
+    std::advance(iterator, tid);
+    scheduler.threads_queue.erase(iterator);
 }
