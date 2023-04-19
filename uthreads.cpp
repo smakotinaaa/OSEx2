@@ -65,6 +65,7 @@ public:
     int total_quantum;
     int cur_index;
     int threads_num;
+    int quantum;
     ThreadScheduler(){
         total_quantum = 0;
         cur_index = 0;
@@ -111,25 +112,7 @@ void timer_handler(int sig){
         siglongjmp(next_thread.env, 1);
     }
 }
-/**
- * @brief initializes the thread library.
- *
- * Once this function returns, the main thread (tid == 0) will be set as RUNNING. There is no need to
- * provide an entry_point or to create a stack for the main thread - it will be using the "regular" stack and PC.
- * You may assume that this function is called before any other thread library function, and that it is called
- * exactly once.
- * The input to the function is the length of a quantum in micro-seconds.
- * It is an error to call this function with non-positive quantum_usecs.
- *
- * @return On success, return 0. On failure, return -1.
-*/
-int uthread_init(int quantum_usecs){
-    if(quantum_usecs <= 0){
-        std::cerr << THREAD_ERROR <<"Quantum_usecs is not positive" << std::endl;
-        return -1;
-    }
-    scheduler.threads_queue.push_back(*new Thread(0));
-    // Install timer_handler as the signal handler for SIGVTALRM.
+void reset_timer(int quantum_usecs){
     sa.sa_handler = &timer_handler;
     if (sigaction(SIGVTALRM, &sa, NULL) < 0)
     {
@@ -143,6 +126,16 @@ int uthread_init(int quantum_usecs){
         std::cerr << SYSTEM_ERROR << "setitimer error" << std::endl;
         exit(1);
     }
+}
+
+int uthread_init(int quantum_usecs){
+    if(quantum_usecs <= 0){
+        std::cerr << THREAD_ERROR <<"Quantum_usecs is not positive" << std::endl;
+        return -1;
+    }
+    scheduler.threads_queue.push_back(*new Thread(0));
+    scheduler.quantum = quantum_usecs;
+    reset_timer(quantum_usecs);
     return 0;
 }
 
@@ -227,8 +220,20 @@ int uthread_block(int tid){
     if(tid == cur_thread.tid){
         cur_thread.state = BLOCKED;
         scheduler.threads_queue.pop_front();
-        scheduler.blocked_threads[cur_thread.tid] = cur_thread;
+        scheduler.blocked_threads.insert(std::make_pair(cur_thread.tid, cur_thread));
+        reset_timer(scheduler.quantum);
 
+        scheduler.threads_queue.front().state = RUNNING;
+        siglongjmp(scheduler.threads_queue.front().env, 1);
     }
-
+    auto iterator = scheduler.threads_queue.begin();
+    for(auto it = scheduler.threads_queue.begin(); it != scheduler.threads_queue.end(); it++){
+        if(tid == it->tid){
+            scheduler.blocked_threads.insert(std::make_pair(it->tid, *it));
+            scheduler.threads_queue.erase(it);
+            return 0;
+        }
+    }
+    std::cerr << THREAD_ERROR << "There is no such thread" << std::endl;
+    return -1;
 }
