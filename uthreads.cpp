@@ -6,6 +6,8 @@
 #include <queue>
 #include <deque>
 #include <sys/time.h>
+#include <map>
+#include <unordered_map>
 
 typedef unsigned long address_t;
 #define JB_SP 6
@@ -39,6 +41,7 @@ public:
     State state;
     sigjmp_buf env;
     int savemask;
+    char* stack;
     thread_entry_point entry_point;
 
     Thread(int tid, char *stack, thread_entry_point entry_point)
@@ -58,6 +61,7 @@ public:
 class ThreadScheduler{
 public:
     std::deque<Thread> threads_queue;
+    std::unordered_map<int, Thread> blocked_threads;
     int total_quantum;
     int cur_index;
     int threads_num;
@@ -65,9 +69,28 @@ public:
         total_quantum = 0;
         cur_index = 0;
         threads_num = 0;
+        threads_queue = *new std::deque<Thread>();
+        blocked_threads = *new std::unordered_map<int, Thread>();
     }
     ~ThreadScheduler(){
+        for (int i = 1; i < threads_queue.size(); ++i) {
 
+            Thread cur_thread = threads_queue[i];
+            if(cur_thread.tid == 0){
+
+                delete &cur_thread;
+            }
+            else{
+                delete[] cur_thread.stack;
+                delete &cur_thread;
+            }
+        }
+        delete &threads_queue;
+        for (auto & blocked_thread : blocked_threads) {
+            delete[] blocked_thread.second.stack;
+            delete &blocked_thread.second;
+        }
+        delete &blocked_threads;
     }
 };
 
@@ -86,7 +109,6 @@ void timer_handler(int sig){
 
         int ret_val = sigsetjmp(cur_thread.env, 1);
         siglongjmp(next_thread.env, 1);
-
     }
 }
 /**
@@ -160,7 +182,53 @@ int uthread_spawn(thread_entry_point entry_point){
  * itself or the main thread is terminated, the function does not return.
 */
 int uthread_terminate(int tid){
-    auto iterator = scheduler.threads_queue.begin();
-    std::advance(iterator, tid);
-    scheduler.threads_queue.erase(iterator);
+    if (tid == 0){
+        delete &scheduler;
+        exit(0);
+    }
+    if(tid == scheduler.threads_queue.front().tid){
+        Thread cur_thread = scheduler.threads_queue.front();
+        scheduler.threads_queue.pop_front();
+        delete[] cur_thread.stack;
+        delete &cur_thread;
+
+        scheduler.threads_queue.front().state = RUNNING;
+        siglongjmp(scheduler.threads_queue.front().env, 1);
+    }
+    else{
+        auto iterator = scheduler.threads_queue.begin();
+        for (int i = 0; i <scheduler.threads_queue.size(); ++i) {
+            if(tid == scheduler.threads_queue[i].tid){
+                delete[] scheduler.threads_queue[i].stack;
+                delete &scheduler.threads_queue[i];
+                scheduler.threads_queue.erase(iterator + i);
+                return 0;
+            }
+        }
+        std::cerr << THREAD_ERROR << "The thread was not terminated, no such thread" << std::endl;
+        return -1;
+    }
+}
+/**
+ * @brief Blocks the thread with ID tid. The thread may be resumed later using uthread_resume.
+ *
+ * If no thread with ID tid exists it is considered as an error. In addition, it is an error to try blocking the
+ * main thread (tid == 0). If a thread blocks itself, a scheduling decision should be made. Blocking a thread in
+ * BLOCKED state has no effect and is not considered an error.
+ *
+ * @return On success, return 0. On failure, return -1.
+*/
+int uthread_block(int tid){
+    if(tid == 0){
+        std::cerr << THREAD_ERROR << "It isn't possible to block the main thread" << std::endl;
+        return -1;
+    }
+    Thread cur_thread = scheduler.threads_queue.front();
+    if(tid == cur_thread.tid){
+        cur_thread.state = BLOCKED;
+        scheduler.threads_queue.pop_front();
+        scheduler.blocked_threads[cur_thread.tid] = cur_thread;
+
+    }
+
 }
