@@ -8,6 +8,7 @@
 #include <sys/time.h>
 #include <map>
 #include <unordered_map>
+#include <set>
 
 typedef unsigned long address_t;
 #define JB_SP 6
@@ -48,6 +49,7 @@ public:
     {
         // initializes env[tid] to use the right stack, and to run from the function 'entry_point', when we'll use
         // siglongjmp to jump into the thread.
+        this->tid = tid;
         address_t sp = (address_t) stack + STACK_SIZE - sizeof(address_t);
         address_t pc = (address_t) entry_point;
         sigsetjmp(env, 1);
@@ -60,35 +62,36 @@ public:
 
 class ThreadScheduler{
 public:
-    std::deque<Thread> threads_queue;
-    std::unordered_map<int, Thread> blocked_threads;
+    std::deque<Thread*> threads_queue;
+    std::unordered_map<int, Thread*> blocked_threads;
     int total_quantum;
     int cur_index;
     int threads_num;
+    std::set<int> avaliable_tids;
     int quantum;
     ThreadScheduler(){
         total_quantum = 0;
         cur_index = 0;
         threads_num = 0;
-        threads_queue = *new std::deque<Thread>();
-        blocked_threads = *new std::unordered_map<int, Thread>();
+        //threads_queue = new std::deque<Thread*>();
+        //blocked_threads = new std::unordered_map<int, Thread*>();
     }
     ~ThreadScheduler(){
         for (int i = 1; i < threads_queue.size(); ++i) {
 
-            Thread cur_thread = threads_queue[i];
-            if(cur_thread.tid == 0){
+            Thread* cur_thread = threads_queue[i];
+            if(cur_thread->tid == 0){
 
                 delete &cur_thread;
             }
             else{
-                delete[] cur_thread.stack;
+                delete[] cur_thread->stack;
                 delete &cur_thread;
             }
         }
         delete &threads_queue;
         for (auto & blocked_thread : blocked_threads) {
-            delete[] blocked_thread.second.stack;
+            delete[] blocked_thread.second->stack;
             delete &blocked_thread.second;
         }
         delete &blocked_threads;
@@ -99,17 +102,19 @@ ThreadScheduler scheduler = *new ThreadScheduler();
 struct sigaction sa = {0};
 struct itimerval timer;
 void timer_handler(int sig){
-    while(!scheduler.threads_queue.empty()){
-        scheduler.total_quantum ++;
-        Thread cur_thread = scheduler.threads_queue.front();
-        scheduler.threads_queue.pop_front();
-        cur_thread.state = READY;
-        scheduler.threads_queue.push_back(cur_thread);
-        Thread next_thread = scheduler.threads_queue.front();
-        next_thread.state = RUNNING;
+    while(!scheduler->threads_queue.empty()){
+        scheduler->total_quantum ++;
+        Thread* cur_thread = scheduler->threads_queue.front();
+        scheduler->threads_queue.pop_front();
+        cur_thread->state = READY;
+        scheduler->threads_queue.push_back(cur_thread);
+        Thread* next_thread = scheduler->threads_queue.front();
+        next_thread->state = RUNNING;
+        next_thread->num_quantum++;
+        std::cout << "In handler, thread num: " << next_thread->tid;
 
-        int ret_val = sigsetjmp(cur_thread.env, 1);
-        siglongjmp(next_thread.env, 1);
+        int ret_val = sigsetjmp(cur_thread->env, 1);
+        siglongjmp(next_thread->env, 1);
     }
 }
 void reset_timer(int quantum_usecs){
@@ -133,9 +138,10 @@ int uthread_init(int quantum_usecs){
         std::cerr << THREAD_ERROR <<"Quantum_usecs is not positive" << std::endl;
         return -1;
     }
-    scheduler.threads_queue.push_back(*new Thread(0));
-    scheduler.quantum = quantum_usecs;
+    scheduler->threads_queue.push_back(new Thread(0));
+    scheduler->quantum = quantum_usecs;
     reset_timer(quantum_usecs);
+
     return 0;
 }
 
@@ -179,9 +185,9 @@ int uthread_terminate(int tid){
         delete &scheduler;
         exit(0);
     }
-    if(tid == scheduler.threads_queue.front().tid){
-        Thread cur_thread = scheduler.threads_queue.front();
-        scheduler.threads_queue.pop_front();
+    if(tid == scheduler->threads_queue.front()->tid){
+        Thread cur_thread = *scheduler->threads_queue.front();
+        scheduler->threads_queue.pop_front();
         delete[] cur_thread.stack;
         delete &cur_thread;
 
@@ -189,14 +195,17 @@ int uthread_terminate(int tid){
         siglongjmp(scheduler.threads_queue.front().env, 1);
     }
     else{
-        auto iterator = scheduler.threads_queue.begin();
-        for (int i = 0; i <scheduler.threads_queue.size(); ++i) {
-            if(tid == scheduler.threads_queue[i].tid){
-                delete[] scheduler.threads_queue[i].stack;
-                delete &scheduler.threads_queue[i];
-                scheduler.threads_queue.erase(iterator + i);
+        auto iterator = scheduler->threads_queue.begin();
+        for (int i = 0; i <scheduler->threads_queue.size(); ++i) {
+            if(tid == scheduler->threads_queue[i]->tid){
+                Thread* cur_thread = scheduler->threads_queue[i];
+                delete[] cur_thread->stack;
+                delete scheduler->threads_queue[i];
+                scheduler->avaliable_tids.insert(tid);
+                scheduler->threads_queue.erase(iterator + i);
                 return 0;
             }
+
         }
         std::cerr << THREAD_ERROR << "The thread was not terminated, no such thread" << std::endl;
         return -1;

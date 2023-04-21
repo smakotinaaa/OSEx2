@@ -3,4 +3,4 @@ project(ex2)
 
 set(CMAKE_CXX_STANDARD 11)
 
-add_executable(ex2 demo_itimer.c uthreads.cpp uthreads.h)
+add_executable(ex2 uthreads.cpp uthreads.h tests/jona1.cpp)
