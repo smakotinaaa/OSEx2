@@ -44,6 +44,7 @@ public:
     int savemask;
     char* stack;
     thread_entry_point entry_point;
+    int num_quantum;
 
     Thread(int tid, char *stack, thread_entry_point entry_point)
     {
@@ -53,11 +54,16 @@ public:
         address_t sp = (address_t) stack + STACK_SIZE - sizeof(address_t);
         address_t pc = (address_t) entry_point;
         sigsetjmp(env, 1);
+        num_quantum = 0;
         (env->__jmpbuf)[JB_SP] = translate_address(sp);
         (env->__jmpbuf)[JB_PC] = translate_address(pc);
         sigemptyset(&env->__saved_mask);
     }
-    Thread(int tid): tid(tid), state(RUNNING){};
+    Thread(int tid): tid(tid), state(RUNNING), num_quantum(1){};
+
+    ~Thread(){
+        delete[] stack;
+    }
 };
 
 class ThreadScheduler{
@@ -65,13 +71,13 @@ public:
     std::deque<Thread*> threads_queue;
     std::unordered_map<int, Thread*> blocked_threads;
     int total_quantum;
-    int cur_index;
+    int largest_index;
     int threads_num;
     std::set<int> avaliable_tids;
     int quantum;
     ThreadScheduler(){
         total_quantum = 0;
-        cur_index = 0;
+        largest_index = 0;
         threads_num = 0;
         //threads_queue = new std::deque<Thread*>();
         //blocked_threads = new std::unordered_map<int, Thread*>();
@@ -97,10 +103,10 @@ public:
         delete &blocked_threads;
     }
 };
-
-ThreadScheduler scheduler = *new ThreadScheduler();
+ThreadScheduler *scheduler = new ThreadScheduler();
 struct sigaction sa = {0};
 struct itimerval timer;
+
 void timer_handler(int sig){
     while(!scheduler->threads_queue.empty()){
         scheduler->total_quantum ++;
@@ -145,41 +151,30 @@ int uthread_init(int quantum_usecs){
     return 0;
 }
 
-/**
- * @brief Creates a new thread, whose entry point is the function entry_point with the signature
- * void entry_point(void).
- *
- * The thread is added to the end of the READY threads list.
- * The uthread_spawn function should fail if it would cause the number of concurrent threads to exceed the
- * limit (MAX_THREAD_NUM).
- * Each thread should be allocated with a stack of size STACK_SIZE bytes.
- * It is an error to call this function with a null entry_point.
- *
- * @return On success, return the ID of the created thread. On failure, return -1.
-*/
 int uthread_spawn(thread_entry_point entry_point){
-    if(scheduler.threads_num >= MAX_THREAD_NUM){
+    if(scheduler->threads_num >= MAX_THREAD_NUM){
         std::cerr << THREAD_ERROR << "Exceeds maximum number of threads" << std::endl;
         return -1;
     }
     char* stack_pointer = new char[STACK_SIZE];
-    scheduler.cur_index ++;
-    Thread new_thread = *new Thread(scheduler.cur_index, stack_pointer, entry_point);
-    new_thread.state = READY;
-    scheduler.threads_queue.push_back(new_thread);
-    return new_thread.tid;
+    int next_tid;
+    if (scheduler->avaliable_tids.empty()){
+        scheduler->largest_index++;
+        next_tid = scheduler->largest_index;
+    }
+    else {
+        next_tid = *scheduler->avaliable_tids.begin();
+        scheduler->avaliable_tids.erase(next_tid);
+    }
+
+    Thread *new_thread = new Thread(next_tid, stack_pointer, entry_point);
+    new_thread->state = READY;
+    scheduler->threads_queue.push_back(new_thread);
+
+
+    return new_thread->tid;
 }
 
-/**
- * @brief Terminates the thread with ID tid and deletes it from all relevant control structures.
- *
- * All the resources allocated by the library for this thread should be released. If no thread with ID tid exists it
- * is considered an error. Terminating the main thread (tid == 0) will result in the termination of the entire
- * process using exit(0) (after releasing the assigned library memory).
- *
- * @return The function returns 0 if the thread was successfully terminated and -1 otherwise. If a thread terminates
- * itself or the main thread is terminated, the function does not return.
-*/
 int uthread_terminate(int tid){
     if (tid == 0){
         delete &scheduler;
@@ -190,9 +185,11 @@ int uthread_terminate(int tid){
         scheduler->threads_queue.pop_front();
         delete[] cur_thread.stack;
         delete &cur_thread;
+        scheduler->avaliable_tids.insert(tid);
+        reset_timer(scheduler->quantum);
+        scheduler->threads_queue.front()->state = RUNNING;
+        siglongjmp(scheduler->threads_queue.front()->env, 1);
 
-        scheduler.threads_queue.front().state = RUNNING;
-        siglongjmp(scheduler.threads_queue.front().env, 1);
     }
     else{
         auto iterator = scheduler->threads_queue.begin();
@@ -207,40 +204,95 @@ int uthread_terminate(int tid){
             }
 
         }
+        //TODO: Check id in blocked threads
         std::cerr << THREAD_ERROR << "The thread was not terminated, no such thread" << std::endl;
         return -1;
     }
 }
-/**
- * @brief Blocks the thread with ID tid. The thread may be resumed later using uthread_resume.
- *
- * If no thread with ID tid exists it is considered as an error. In addition, it is an error to try blocking the
- * main thread (tid == 0). If a thread blocks itself, a scheduling decision should be made. Blocking a thread in
- * BLOCKED state has no effect and is not considered an error.
- *
- * @return On success, return 0. On failure, return -1.
-*/
+
 int uthread_block(int tid){
     if(tid == 0){
         std::cerr << THREAD_ERROR << "It isn't possible to block the main thread" << std::endl;
         return -1;
     }
-    Thread cur_thread = scheduler.threads_queue.front();
-    if(tid == cur_thread.tid){
-        cur_thread.state = BLOCKED;
-        scheduler.threads_queue.pop_front();
-        scheduler.blocked_threads.insert(std::make_pair(cur_thread.tid, cur_thread));
-        reset_timer(scheduler.quantum);
-
-        scheduler.threads_queue.front().state = RUNNING;
-        siglongjmp(scheduler.threads_queue.front().env, 1);
+    Thread* cur_thread = scheduler->threads_queue.front();
+    if(tid == cur_thread->tid){
+        cur_thread->state = BLOCKED;
+        scheduler->threads_queue.pop_front();
+        scheduler->blocked_threads.insert(std::make_pair(cur_thread->tid, cur_thread));
+        reset_timer(scheduler->quantum);
+        scheduler->threads_queue.front()->state = RUNNING;
+        siglongjmp(scheduler->threads_queue.front()->env, 1);
     }
-    auto iterator = scheduler.threads_queue.begin();
-    for(auto it = scheduler.threads_queue.begin(); it != scheduler.threads_queue.end(); it++){
-        if(tid == it->tid){
-            scheduler.blocked_threads.insert(std::make_pair(it->tid, *it));
-            scheduler.threads_queue.erase(it);
+    auto iterator = scheduler->threads_queue.begin();
+    for(auto it = scheduler->threads_queue.begin(); it != scheduler->threads_queue.end(); it++){
+        if(tid == (*it)->tid){
+            scheduler->blocked_threads.insert(std::make_pair((*it)->tid, *it));
+            scheduler->threads_queue.erase(it);
             return 0;
+        }
+    }
+    std::cerr << THREAD_ERROR << "There is no such thread" << std::endl;
+    return -1;
+}
+
+int uthread_resume(int tid){
+
+    if (scheduler->blocked_threads.find(tid) == scheduler->blocked_threads.end()){
+        for (auto &thread: scheduler->threads_queue){
+            if (thread->tid == tid){
+                return 0;
+            }
+        }
+        std::cerr << THREAD_ERROR << "There is no such thread" << std::endl;
+        return -1;
+    }
+    Thread *cur_thread = scheduler->blocked_threads.at(tid);
+    scheduler->blocked_threads.erase(tid);
+    cur_thread->state = READY;
+    scheduler->threads_queue.push_back(cur_thread);
+    return 0;
+}
+
+/**
+ * @brief Blocks the RUNNING thread for num_quantums quantums.
+ *
+ * Immediately after the RUNNING thread transitions to the BLOCKED state a scheduling decision should be made.
+ * After the sleeping time is over, the thread should go back to the end of the READY queue.
+ * If the thread which was just RUNNING should also be added to the READY queue, or if multiple threads wake up
+ * at the same time, the order in which they're added to the end of the READY queue doesn't matter.
+ * The number of quantums refers to the number of times a new quantum starts, regardless of the reason. Specifically,
+ * the quantum of the thread which has made the call to uthread_sleep isn’t counted.
+ * It is considered an error if the main thread (tid == 0) calls this function.
+ *
+ * @return On success, return 0. On failure, return -1.
+*/
+int uthread_sleep(int num_quantums){
+    if(num_quantums <= 0){
+        std::cerr << THREAD_ERROR << "The quantums number is illegal" << std::endl;
+        return -1;
+    }
+    if (scheduler->threads_queue.front()->tid == 0){
+        std::cerr << THREAD_ERROR << "Main thread could not be blocked" << std::endl;
+        return -1;
+    }
+}
+
+int uthread_get_tid(){
+    return scheduler->threads_queue.front()->tid;
+}
+
+int uthread_get_total_quantums(){
+    return scheduler->total_quantum;
+}
+
+int uthread_get_quantums(int tid){
+    if (scheduler->blocked_threads.find(tid) != scheduler->blocked_threads.end()){
+        return scheduler->blocked_threads.at(tid)->num_quantum;
+    }
+    for (auto &thread: scheduler->threads_queue){
+        if (thread->tid == tid){
+            return thread->num_quantum;
         }
     }
     std::cerr << THREAD_ERROR << "There is no such thread" << std::endl;
