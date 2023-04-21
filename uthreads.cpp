@@ -92,7 +92,7 @@ public:
             }
             else{
                 delete[] cur_thread->stack;
-                delete &cur_thread;
+                delete cur_thread;
             }
         }
         delete &threads_queue;
@@ -108,7 +108,8 @@ struct sigaction sa = {0};
 struct itimerval timer;
 
 void timer_handler(int sig){
-    while(!scheduler->threads_queue.empty()){
+    sigprocmask(SIG_BLOCK, scheduler->signals, nullptr);
+    if(!scheduler->threads_queue.empty()){
         scheduler->total_quantum ++;
         Thread* cur_thread = scheduler->threads_queue.front();
         scheduler->threads_queue.pop_front();
@@ -120,8 +121,12 @@ void timer_handler(int sig){
         std::cout << "In handler, thread num: " << next_thread->tid;
 
         int ret_val = sigsetjmp(cur_thread->env, 1);
-        siglongjmp(next_thread->env, 1);
+        bool did_just_save_bookmark = ret_val == 0;
+        if(did_just_save_bookmark){
+            siglongjmp(next_thread->env, 1);
+        }
     }
+    sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
 }
 void reset_timer(int quantum_usecs){
     sa.sa_handler = &timer_handler;
@@ -132,6 +137,9 @@ void reset_timer(int quantum_usecs){
     }
     timer.it_value.tv_sec = quantum_usecs / SECOND;
     timer.it_value.tv_usec = quantum_usecs % SECOND;
+
+    timer.it_interval.tv_sec = quantum_usecs / SECOND;
+    timer.it_interval.tv_usec = quantum_usecs % SECOND;
     if (setitimer(ITIMER_VIRTUAL, &timer, NULL))
     {
         std::cerr << SYSTEM_ERROR << "setitimer error" << std::endl;
@@ -152,6 +160,8 @@ int uthread_init(int quantum_usecs){
 }
 
 int uthread_spawn(thread_entry_point entry_point){
+
+    sigprocmask(SIG_BLOCK, scheduler->signals, nullptr);
     if(scheduler->threads_num >= MAX_THREAD_NUM){
         std::cerr << THREAD_ERROR << "Exceeds maximum number of threads" << std::endl;
         return -1;
@@ -170,8 +180,7 @@ int uthread_spawn(thread_entry_point entry_point){
     Thread *new_thread = new Thread(next_tid, stack_pointer, entry_point);
     new_thread->state = READY;
     scheduler->threads_queue.push_back(new_thread);
-
-
+    sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
     return new_thread->tid;
 }
 
@@ -189,7 +198,6 @@ int uthread_terminate(int tid){
         reset_timer(scheduler->quantum);
         scheduler->threads_queue.front()->state = RUNNING;
         siglongjmp(scheduler->threads_queue.front()->env, 1);
-
     }
     else{
         auto iterator = scheduler->threads_queue.begin();
@@ -202,7 +210,6 @@ int uthread_terminate(int tid){
                 scheduler->threads_queue.erase(iterator + i);
                 return 0;
             }
-
         }
         //TODO: Check id in blocked threads
         std::cerr << THREAD_ERROR << "The thread was not terminated, no such thread" << std::endl;
@@ -219,6 +226,8 @@ int uthread_block(int tid){
     if(tid == cur_thread->tid){
         cur_thread->state = BLOCKED;
         scheduler->threads_queue.pop_front();
+        Thread* next_thread = scheduler->threads_queue.front();
+        std::cout<< "Blocked thread: " << cur_thread->tid << std::endl;
         scheduler->blocked_threads.insert(std::make_pair(cur_thread->tid, cur_thread));
         reset_timer(scheduler->quantum);
         scheduler->threads_queue.front()->state = RUNNING;
@@ -227,6 +236,7 @@ int uthread_block(int tid){
     auto iterator = scheduler->threads_queue.begin();
     for(auto it = scheduler->threads_queue.begin(); it != scheduler->threads_queue.end(); it++){
         if(tid == (*it)->tid){
+            std::cout<< "Blocked thread: " << (*it)->tid << std::endl;
             scheduler->blocked_threads.insert(std::make_pair((*it)->tid, *it));
             scheduler->threads_queue.erase(it);
             return 0;
