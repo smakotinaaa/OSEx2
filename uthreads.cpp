@@ -3,12 +3,11 @@
 #include <csignal>
 #include <iostream>
 #include "uthreads.h"
-#include <queue>
 #include <deque>
 #include <sys/time.h>
-#include <map>
-#include <unordered_map>
 #include <set>
+#include <algorithm>
+#include <vector>
 
 typedef unsigned long address_t;
 #define JB_SP 6
@@ -20,6 +19,11 @@ typedef unsigned long address_t;
 #define SECOND 1000000
 #define SYSTEM_ERROR "system error: "
 #define THREAD_ERROR "thread library error: "
+#define QUANTUM_ERROR "Quantum_usecs is not positive"
+#define MAX_THREAD_NUM_ERROR "Exceeds maximum number of threads"
+#define INVALID_ID_ERROR "The thread id is invalid"
+#define NO_THREAD_ERROR "The thread was not terminated, no such thread"
+#define BLOCKING_MAIN_THREAD_ERROR "It isn't possible to block the main thread"
 
 /* A translation is required when using an address of a variable.
    Use this as a black box in your code. */
@@ -45,6 +49,7 @@ public:
     thread_entry_point entry_point;
     int num_quantum;
     int wakeup_quantum;
+    bool is_blocked = false;
 
     Thread(int tid, char *stack, thread_entry_point entry_point)
     {
@@ -108,19 +113,6 @@ struct itimerval timer;
 void increase_quantum(Thread* next_thread) {
     scheduler->total_quantum++;
     next_thread->num_quantum++;
-//    if(scheduler->sleeping_threads.empty()){
-//        return;
-//    }
-    auto it = scheduler->sleeping_threads.begin();
-    while (it != scheduler->sleeping_threads.end()){
-        if ((*it)->wakeup_quantum == scheduler->total_quantum){
-            (*it)->wakeup_quantum = 0;
-            uthread_resume((*it)->tid);
-            scheduler->sleeping_threads.erase(it);
-            break;
-        }
-        it++;
-    }
 }
 
 void timer_handler(int sig){
@@ -131,8 +123,9 @@ void timer_handler(int sig){
         cur_thread->state = READY;
         scheduler->threads_queue.push_back(cur_thread);
         Thread* next_thread = scheduler->threads_queue.front();
-        next_thread->state = RUNNING;;
-        increase_quantum(next_thread);
+        next_thread->state = RUNNING;
+//        increase_quantum(next_thread);
+        next_thread->num_quantum++;
         int ret_val = sigsetjmp(cur_thread->env, 1);
         bool did_just_save_bookmark = ret_val == 0;
         if(did_just_save_bookmark){
@@ -166,7 +159,7 @@ void reset_timer(int quantum_usecs){
 
 int uthread_init(int quantum_usecs){
     if(quantum_usecs <= 0){
-        std::cerr << THREAD_ERROR <<"Quantum_usecs is not positive" << std::endl;
+        std::cerr << THREAD_ERROR << QUANTUM_ERROR << std::endl;
         return -1;
     }
     Thread *main_thread = new Thread(0);
@@ -175,12 +168,10 @@ int uthread_init(int quantum_usecs){
     scheduler->all_threads[main_thread->tid] = main_thread;
     scheduler->quantum = quantum_usecs;
     reset_timer(quantum_usecs);
-
     return 0;
 }
 
 int uthread_spawn(thread_entry_point entry_point){
-
     sigprocmask(SIG_BLOCK, scheduler->signals, nullptr);
 //    if(scheduler->threads_num >= MAX_THREAD_NUM){
 //        std::cerr << THREAD_ERROR << "Exceeds maximum number of threads" << std::endl;
@@ -198,7 +189,7 @@ int uthread_spawn(thread_entry_point entry_point){
             return i;
         }
     }
-    std::cerr << THREAD_ERROR << "Exceeds maximum number of threads" << std::endl;
+    std::cerr << THREAD_ERROR << MAX_THREAD_NUM_ERROR << std::endl;
     sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
     return -1;
 }
@@ -207,7 +198,7 @@ int uthread_terminate(int tid){
     sigprocmask(SIG_BLOCK, scheduler->signals, nullptr);
     if(tid < 0 || tid >= MAX_THREAD_NUM){
         // Invalid id
-        std::cerr << THREAD_ERROR << "The thread id is invalid" << std::endl;
+        std::cerr << THREAD_ERROR << INVALID_ID_ERROR << std::endl;
         sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
         return -1;
     }
@@ -221,7 +212,7 @@ int uthread_terminate(int tid){
 
     if (cur_thread == nullptr){
         // No such thread.
-        std::cerr << THREAD_ERROR << "The thread was not terminated, no such thread" << std::endl;
+        std::cerr << THREAD_ERROR << NO_THREAD_ERROR << std::endl;
         sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
         return -1;
     }
@@ -259,12 +250,12 @@ int uthread_block(int tid){
     sigprocmask(SIG_BLOCK, scheduler->signals, nullptr);
     if(tid < 0 || tid >= MAX_THREAD_NUM){
         // Invalid id
-        std::cerr << THREAD_ERROR << "The thread id is invalid" << std::endl;
+        std::cerr << THREAD_ERROR << INVALID_ID_ERROR << std::endl;
         sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
         return -1;
     }
     if(tid == 0){
-        std::cerr << THREAD_ERROR << "It isn't possible to block the main thread" << std::endl;
+        std::cerr << THREAD_ERROR << BLOCKING_MAIN_THREAD_ERROR << std::endl;
         sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
         return -1;
     }
@@ -273,13 +264,14 @@ int uthread_block(int tid){
 
     if(cur_thread == nullptr){
         // No such thread
-        std::cerr << THREAD_ERROR << "The thread was not terminated, no such thread" << std::endl;
+        std::cerr << THREAD_ERROR << NO_THREAD_ERROR << std::endl;
         sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
         return -1;
     }
     if(tid == scheduler->threads_queue.front()->tid){
         // Thread is running now
         cur_thread->state = BLOCKED;
+        cur_thread->is_blocked = true;
         scheduler->threads_queue.pop_front();
         Thread* next_thread = scheduler->threads_queue.front();
         next_thread->state = RUNNING;
@@ -297,9 +289,9 @@ int uthread_block(int tid){
     else {
         // Thread is not running now
         cur_thread->state = BLOCKED;
+        cur_thread->is_blocked = true;
         for (auto it = scheduler->threads_queue.begin(); it != scheduler->threads_queue.end(); it++) {
             if (tid == (*it)->tid) {
-                //std::cout << "Blocked thread: " << (*it)->tid << std::endl;
                 scheduler->threads_queue.erase(it);
                 sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
                 break;
@@ -314,14 +306,14 @@ int uthread_resume(int tid){
     sigprocmask(SIG_BLOCK, scheduler->signals, nullptr);
     if(tid < 0 || tid >= MAX_THREAD_NUM){
         // Invalid id
-        std::cerr << THREAD_ERROR << "The thread id is invalid" << std::endl;
+        std::cerr << THREAD_ERROR << INVALID_ID_ERROR << std::endl;
         sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
         return -1;
     }
     Thread* cur_thread = scheduler->all_threads[tid];
     if (cur_thread == nullptr){
         // No such thread
-        std::cerr << THREAD_ERROR << "The thread was not terminated, no such thread" << std::endl;
+        std::cerr << THREAD_ERROR << NO_THREAD_ERROR << std::endl;
         sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
         return -1;
     }
@@ -333,6 +325,7 @@ int uthread_resume(int tid){
             return 0;
         }
         cur_thread->state = READY;
+        cur_thread->is_blocked = false;
         scheduler->threads_queue.push_back(cur_thread);
     }
     sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
@@ -360,7 +353,7 @@ int uthread_sleep(int num_quantums){
     }
     Thread *cur_thread = scheduler->threads_queue.front();
     if (cur_thread->tid == 0){
-        std::cerr << THREAD_ERROR << "Main thread could not be blocked" << std::endl;
+        std::cerr << THREAD_ERROR << BLOCKING_MAIN_THREAD_ERROR << std::endl;
         return -1;
     }
     cur_thread->wakeup_quantum = scheduler->total_quantum + num_quantums;
@@ -393,13 +386,13 @@ int uthread_get_quantums(int tid){
     sigprocmask(SIG_BLOCK, scheduler->signals, nullptr);
     if(tid < 0 || tid >= MAX_THREAD_NUM){
         // Invalid id
-        std::cerr << THREAD_ERROR << "The thread id is invalid" << std::endl;
+        std::cerr << THREAD_ERROR << INVALID_ID_ERROR << std::endl;
         sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
         return -1;
     }
     Thread* cur_thread = scheduler->all_threads[tid];
     if (cur_thread == nullptr){
-        std::cerr << THREAD_ERROR << "The thread was not terminated, no such thread" << std::endl;
+        std::cerr << THREAD_ERROR << NO_THREAD_ERROR << std::endl;
         sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
         return -1;
     }
