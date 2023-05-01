@@ -385,7 +385,7 @@ int uthread_sleep(int num_quantums){
     bool did_just_save_bookmark = ret_val == 0;
     if(did_just_save_bookmark) {
         reset_timer(scheduler->quantum);
-        increase_quantum(next_thread);
+        //increase_quantum(next_thread);
         sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
         siglongjmp(next_thread->env, 1);
     }
