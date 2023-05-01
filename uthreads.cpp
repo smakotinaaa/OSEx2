@@ -110,6 +110,43 @@ ThreadScheduler *scheduler = new ThreadScheduler();
 struct sigaction sa = {0};
 struct itimerval timer;
 
+
+void wake_up_threads(){
+    //std::vector<Thread*> to_wake_up;
+    if(scheduler->sleeping_threads.empty()){
+        return;
+    }
+//    auto it = scheduler->sleeping_threads.begin();
+//    while (it != scheduler->sleeping_threads.end()) {
+//        if ((*it)->wakeup_quantum >= scheduler->total_quantum) {
+//                (*it)->wakeup_quantum = 0;
+//                to_wake_up.push_back(*it);
+//        }
+//        it++;
+//    }
+//    for(auto thread: to_wake_up){
+//        scheduler->sleeping_threads.erase(thread);
+//        uthread_resume((thread->tid));
+//    }
+
+    auto it = scheduler->sleeping_threads.begin();
+    while (it != scheduler->sleeping_threads.end()){
+        if ((*it)->wakeup_quantum == scheduler->total_quantum){
+            (*it)->wakeup_quantum = 0;
+            if (!((*it)->is_blocked)){
+                (*it)->state = READY;
+                scheduler->threads_queue.push_back(*it);
+//                uthread_resume((*it)->tid);
+
+            }
+            it = scheduler->sleeping_threads.erase(it);
+        }
+        else{
+            it++;
+        }
+    }
+}
+
 void increase_quantum(Thread* next_thread) {
     scheduler->total_quantum++;
     next_thread->num_quantum++;
@@ -118,6 +155,8 @@ void increase_quantum(Thread* next_thread) {
 void timer_handler(int sig){
     sigprocmask(SIG_BLOCK, scheduler->signals, nullptr);
     if(!scheduler->threads_queue.empty()){
+        scheduler->total_quantum++;
+        wake_up_threads();
         Thread* cur_thread = scheduler->threads_queue.front();
         scheduler->threads_queue.pop_front();
         cur_thread->state = READY;
@@ -163,7 +202,6 @@ int uthread_init(int quantum_usecs){
         return -1;
     }
     Thread *main_thread = new Thread(0);
-//    scheduler->threads_num++;
     scheduler->threads_queue.push_back(main_thread);
     scheduler->all_threads[main_thread->tid] = main_thread;
     scheduler->quantum = quantum_usecs;
@@ -173,17 +211,11 @@ int uthread_init(int quantum_usecs){
 
 int uthread_spawn(thread_entry_point entry_point){
     sigprocmask(SIG_BLOCK, scheduler->signals, nullptr);
-//    if(scheduler->threads_num >= MAX_THREAD_NUM){
-//        std::cerr << THREAD_ERROR << "Exceeds maximum number of threads" << std::endl;
-//        sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
-//        return -1;
-//    }
     for (int i = 1; i < MAX_THREAD_NUM; ++i) {
         if (scheduler->all_threads[i] == nullptr){
             char* stack_pointer = new char[STACK_SIZE];
             scheduler->all_threads[i] = new Thread(i, stack_pointer, entry_point);
             scheduler->all_threads[i]->state = READY;
-//            scheduler->threads_num++;
             scheduler->threads_queue.push_back(scheduler->all_threads[i]);
             sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
             return i;
@@ -220,15 +252,13 @@ int uthread_terminate(int tid){
     if(tid == scheduler->threads_queue.front()->tid){
         // Thread is Running now
         scheduler->threads_queue.pop_front();
-//        delete[] cur_thread->stack;
         delete cur_thread;
         scheduler->all_threads[tid] = nullptr;
         reset_timer(scheduler->quantum);
         scheduler->threads_queue.front()->state = RUNNING;
-        sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
-//        scheduler->threads_queue.front()->num_quantum++;
-//        scheduler->total_quantum++;
+
         increase_quantum(scheduler->threads_queue.front());
+        sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
         siglongjmp(scheduler->threads_queue.front()->env, 1);
     }
     else{
@@ -268,6 +298,7 @@ int uthread_block(int tid){
         sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
         return -1;
     }
+
     if(tid == scheduler->threads_queue.front()->tid){
         // Thread is running now
         cur_thread->state = BLOCKED;
@@ -279,10 +310,8 @@ int uthread_block(int tid){
         bool did_just_save_bookmark = ret_val == 0;
         if(did_just_save_bookmark){
             reset_timer(scheduler->quantum);
-            sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
-//            next_thread->num_quantum++;
-//            scheduler->total_quantum++;
             increase_quantum(next_thread);
+            sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
             siglongjmp(next_thread->env, 1);
         }
     }
@@ -321,6 +350,7 @@ int uthread_resume(int tid){
         // Thread is blocked
         if (cur_thread->wakeup_quantum > 0){
             // Thread is sleeping
+            cur_thread->is_blocked = false;
             sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
             return 0;
         }
@@ -332,19 +362,7 @@ int uthread_resume(int tid){
     return 0;
 }
 
-/**
- * @brief Blocks the RUNNING thread for num_quantums quantums.
- *
- * Immediately after the RUNNING thread transitions to the BLOCKED state a scheduling decision should be made.
- * After the sleeping time is over, the thread should go back to the end of the READY queue.
- * If the thread which was just RUNNING should also be added to the READY queue, or if multiple threads wake up
- * at the same time, the order in which they're added to the end of the READY queue doesn't matter.
- * The number of quantums refers to the number of times a new quantum starts, regardless of the reason. Specifically,
- * the quantum of the thread which has made the call to uthread_sleep isn’t counted.
- * It is considered an error if the main thread (tid == 0) calls this function.
- *
- * @return On success, return 0. On failure, return -1.
-*/
+
 int uthread_sleep(int num_quantums){
     sigprocmask(SIG_BLOCK, scheduler->signals, nullptr);
     if(num_quantums <= 0){
@@ -356,7 +374,8 @@ int uthread_sleep(int num_quantums){
         std::cerr << THREAD_ERROR << BLOCKING_MAIN_THREAD_ERROR << std::endl;
         return -1;
     }
-    cur_thread->wakeup_quantum = scheduler->total_quantum + num_quantums;
+//    cur_thread->wakeup_quantum = scheduler->total_quantum + num_quantums;
+    cur_thread->wakeup_quantum = scheduler->total_quantum + num_quantums + 1;
     cur_thread->state = BLOCKED;
     scheduler->sleeping_threads.insert(cur_thread);
     scheduler->threads_queue.pop_front();
@@ -366,8 +385,8 @@ int uthread_sleep(int num_quantums){
     bool did_just_save_bookmark = ret_val == 0;
     if(did_just_save_bookmark) {
         reset_timer(scheduler->quantum);
-        sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
         increase_quantum(next_thread);
+        sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
         siglongjmp(next_thread->env, 1);
     }
     sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
