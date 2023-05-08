@@ -7,7 +7,6 @@
 #include <sys/time.h>
 #include <set>
 #include <algorithm>
-#include <vector>
 
 typedef unsigned long address_t;
 #define JB_SP 6
@@ -56,7 +55,8 @@ public:
 
     Thread(int tid, char *stack, thread_entry_point entry_point)
     {
-        // initializes env[tid] to use the right stack, and to run from the function 'entry_point', when we'll use
+        // initializes env[tid] to use the right stack,
+        // and to run from the function 'entry_point', when we'll use
         // siglongjmp to jump into the thread.
         this->tid = tid;
         address_t sp = (address_t) stack + STACK_SIZE - sizeof(address_t);
@@ -199,7 +199,8 @@ int uthread_spawn(thread_entry_point entry_point){
     for (int i = 1; i < MAX_THREAD_NUM; ++i) {
         if (scheduler->all_threads[i] == nullptr){
             char* stack_pointer = new char[STACK_SIZE];
-            scheduler->all_threads[i] = new Thread(i, stack_pointer, entry_point);
+            scheduler->all_threads[i] = new Thread(i, stack_pointer,
+                                                   entry_point);
             scheduler->all_threads[i]->state = READY;
             scheduler->threads_queue.push_back(scheduler->all_threads[i]);
             sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
@@ -246,10 +247,19 @@ int uthread_terminate(int tid){
         siglongjmp(scheduler->threads_queue.front()->env, 1);
     }
     else{
-        for (auto it = scheduler->threads_queue.begin(); it != scheduler->threads_queue.end(); it++){
+        for (auto it = scheduler->threads_queue.begin();
+        it != scheduler->threads_queue.end(); it++){
             // Thread is not running now
             if((*it)->tid == tid){
                 scheduler->threads_queue.erase(it);
+                break;
+            }
+        }
+        for (auto it = scheduler->sleeping_threads.begin();
+        it != scheduler->sleeping_threads.end(); it++){
+            // Thread is not running now
+            if((*it)->tid == tid){
+                scheduler->sleeping_threads.erase(it);
                 break;
             }
         }
@@ -300,7 +310,8 @@ int uthread_block(int tid){
         // Thread is not running now
         cur_thread->state = BLOCKED;
         cur_thread->is_blocked = true;
-        for (auto it = scheduler->threads_queue.begin(); it != scheduler->threads_queue.end(); it++) {
+        for (auto it = scheduler->threads_queue.begin();
+        it != scheduler->threads_queue.end(); it++) {
             if (tid == (*it)->tid) {
                 scheduler->threads_queue.erase(it);
                 sigprocmask(SIG_UNBLOCK, scheduler->signals, nullptr);
@@ -355,7 +366,6 @@ int uthread_sleep(int num_quantums){
         std::cerr << THREAD_ERROR << BLOCKING_MAIN_THREAD_ERROR << std::endl;
         return -1;
     }
-//    cur_thread->wakeup_quantum = scheduler->total_quantum + num_quantums;
     cur_thread->wakeup_quantum = scheduler->total_quantum + num_quantums + 1;
     cur_thread->state = BLOCKED;
     scheduler->sleeping_threads.insert(cur_thread);
