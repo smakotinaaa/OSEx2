@@ -14,7 +14,6 @@ typedef unsigned long address_t;
 
 #define MAX_THREAD_NUM 100 /* maximal number of threads */
 #define STACK_SIZE 4096 /* stack size per thread (in bytes) */
-
 #define SECOND 1000000
 #define SYSTEM_ERROR "system error: "
 #define THREAD_ERROR "thread library error: "
