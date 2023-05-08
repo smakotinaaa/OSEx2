@@ -55,11 +55,11 @@ build CMakeFiles/ex2.dir/uthreads.cpp.o: CXX_COMPILER__ex2_Debug /cs/usr/k_smako
   OBJECT_DIR = CMakeFiles/ex2.dir
   OBJECT_FILE_DIR = CMakeFiles/ex2.dir
 
-build CMakeFiles/ex2.dir/tests/jona1.cpp.o: CXX_COMPILER__ex2_Debug /cs/usr/k_smakotina/Desktop/Year_3/67808_OS/ex2/tests/jona1.cpp || cmake_object_order_depends_target_ex2
-  DEP_FILE = CMakeFiles/ex2.dir/tests/jona1.cpp.o.d
+build CMakeFiles/ex2.dir/basic_test.cpp.o: CXX_COMPILER__ex2_Debug /cs/usr/k_smakotina/Desktop/Year_3/67808_OS/ex2/basic_test.cpp || cmake_object_order_depends_target_ex2
+  DEP_FILE = CMakeFiles/ex2.dir/basic_test.cpp.o.d
   FLAGS = -g -std=gnu++11
   OBJECT_DIR = CMakeFiles/ex2.dir
-  OBJECT_FILE_DIR = CMakeFiles/ex2.dir/tests
+  OBJECT_FILE_DIR = CMakeFiles/ex2.dir
 
 
 # =============================================================================
@@ -69,7 +69,7 @@ build CMakeFiles/ex2.dir/tests/jona1.cpp.o: CXX_COMPILER__ex2_Debug /cs/usr/k_sm
 #############################################
 # Link the executable ex2
 
-build ex2: CXX_EXECUTABLE_LINKER__ex2_Debug CMakeFiles/ex2.dir/uthreads.cpp.o CMakeFiles/ex2.dir/tests/jona1.cpp.o
+build ex2: CXX_EXECUTABLE_LINKER__ex2_Debug CMakeFiles/ex2.dir/uthreads.cpp.o CMakeFiles/ex2.dir/basic_test.cpp.o
   FLAGS = -g
   OBJECT_DIR = CMakeFiles/ex2.dir
   POST_BUILD = :
