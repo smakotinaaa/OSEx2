@@ -1,3 +1,0 @@
-/cs/usr/k_smakotina/Desktop/Year_3/67808_OS/ex2/cmake-build-debug/CMakeFiles/ex2.dir
-/cs/usr/k_smakotina/Desktop/Year_3/67808_OS/ex2/cmake-build-debug/CMakeFiles/edit_cache.dir
-/cs/usr/k_smakotina/Desktop/Year_3/67808_OS/ex2/cmake-build-debug/CMakeFiles/rebuild_cache.dir
